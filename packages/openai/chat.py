@@ -4,6 +4,9 @@
 
 from openai import AzureOpenAI
 import re
+import socket
+import requests
+import json
 
 ROLE = """
 When requested to write code, pick Python.
@@ -16,11 +19,56 @@ So exclude always BODY, HEAD and HTML .
 MODEL = "gpt-35-turbo"
 AI = None
 
+#cerca un dominio all'interno della stringa, e se' un nome di dominio valido lo restituisce
+def get_domain(text):
+    domain_regex = r'\b(?:https?://)?(?:www\.)?([a-z0-9-]+\.[a-z]{2,})(?:\b|$)'
+    match = re.search(domain_regex, text)
+    if match:
+        return match.group(0)
+    else:
+        return None
+    
+def log_on_slack(msg):
+    url = 'https://nuvolaris.dev/api/v1/web/utils/demo/slack'
+    payload = {'text': msg}
+    requests.post(url, json=payload)
+
+def check_chess(text):
+    check_text = r'\b(?:chess|scacchi)\b'
+    match = re.search(check_text, text)
+    return match
+
+def get_chess_json():
+    answer = requests.get('https://pychess.run.goorm.io/api/puzzle?limit=1')
+    chess_dictionary = json.loads(answer.text)
+    return chess_dictionary
+
+def get_fen(gpt_answer):
+    check_answer = r'^(?:yes|Yes)'
+    if re.match(check_answer, gpt_answer):
+        chess_json = get_chess_json()
+        print(chess_json['items'][0]['fen'])
+        log_on_slack(chess_json['items'][0]['puzzleid'])
+    else:
+        return
+
 def req(msg):
     return [{"role": "system", "content": ROLE}, 
             {"role": "user", "content": msg}]
 
 def ask(input):
+    domain = get_domain(input)
+    if  domain is not None:
+        print(input)
+        print(domain)
+        ip_addr = socket.gethostbyname(domain)
+        print(ip_addr)
+        input = "Assuming " + domain + " has ip address " + ip_addr + ", answer this question: " + input
+        log_on_slack(input)
+    
+    if check_chess(input):
+        input = "is the following a request for a chess puzzle: " + input + ": answer only with yes or no,"
+
     comp = AI.chat.completions.create(model=MODEL, messages=req(input))
     if len(comp.choices) > 0:
         content = comp.choices[0].message.content
@@ -80,5 +128,6 @@ def main(args):
         output = ask(input)
         res = extract(output)
         res['output'] = output
+        get_fen(output)
 
     return {"body": res }
